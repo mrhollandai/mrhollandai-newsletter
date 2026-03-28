@@ -1,0 +1,144 @@
+name: Daily AI News - The Tempo
+
+on:
+  schedule:
+    # Run at 8:00 AM UTC daily (3:00 AM EST / 12:00 AM PST)
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      custom_date:
+        description: 'Custom date for news (YYYY-MM-DD)'
+        required: false
+        type: string
+
+jobs:
+  gather-ai-news:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        npm init -y
+        npm install axios dotenv
+        
+    - name: Gather AI News
+      env:
+        COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+      run: |
+        node << 'EOF'
+        const axios = require('axios');
+        const fs = require('fs');
+        
+        async function gatherAINews() {
+          try {
+            // Search for AI news from the past day
+            const newsResponse = await axios.post('https://backend.composio.dev/api/v1/tools/execute', {
+              tool_slug: 'COMPOSIO_SEARCH_NEWS',
+              arguments: {
+                query: 'artificial intelligence',
+                when: 'd',
+                gl: 'us',
+                hl: 'en'
+              }
+            }, {
+              headers: {
+                'Authorization': `Bearer ${process.env.COMPOSIO_API_KEY}`,
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            // Search for AI startup/funding news
+            const startupResponse = await axios.post('https://backend.composio.dev/api/v1/tools/execute', {
+              tool_slug: 'COMPOSIO_SEARCH_NEWS',
+              arguments: {
+                query: 'AI startup funding',
+                when: 'd',
+                gl: 'us',
+                hl: 'en'
+              }
+            }, {
+              headers: {
+                'Authorization': `Bearer ${process.env.COMPOSIO_API_KEY}`,
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            // Search for AI tools/product releases
+            const toolsResponse = await axios.post('https://backend.composio.dev/api/v1/tools/execute', {
+              tool_slug: 'COMPOSIO_SEARCH_NEWS',
+              arguments: {
+                query: 'AI tool new release',
+                when: 'd',
+                gl: 'us',
+                hl: 'en'
+              }
+            }, {
+              headers: {
+                'Authorization': `Bearer ${process.env.COMPOSIO_API_KEY}`,
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            const today = new Date().toISOString().split('T')[0];
+            const timestamp = new Date().toISOString();
+            
+            const results = {
+              date: today,
+              timestamp: timestamp,
+              sources: {
+                general_ai: newsResponse.data?.data?.news_results || [],
+                startup_funding: startupResponse.data?.data?.news_results || [],
+                tools_releases: toolsResponse.data?.data?.news_results || []
+              },
+              total_articles: (
+                (newsResponse.data?.data?.news_results?.length || 0) +
+                (startupResponse.data?.data?.news_results?.length || 0) +
+                (toolsResponse.data?.data?.news_results?.length || 0)
+              ),
+              status: 'raw'
+            };
+            
+            // Create data directory if it doesn't exist
+            if (!fs.existsSync('data')) {
+              fs.mkdirSync('data');
+            }
+            
+            if (!fs.existsSync('data/daily-news')) {
+              fs.mkdirSync('data/daily-news');
+            }
+            
+            // Save raw results
+            fs.writeFileSync(
+              `data/daily-news/${today}.json`,
+              JSON.stringify(results, null, 2)
+            );
+            
+            console.log(`✅ Gathered ${results.total_articles} AI news articles for ${today}`);
+            console.log(`📊 General AI: ${results.sources.general_ai.length}`);
+            console.log(`💰 Startup/Funding: ${results.sources.startup_funding.length}`);
+            console.log(`🔧 Tools/Releases: ${results.sources.tools_releases.length}`);
+            
+          } catch (error) {
+            console.error('❌ Error gathering AI news:', error.message);
+            process.exit(1);
+          }
+        }
+        
+        gatherAINews();
+        EOF
+        
+    - name: Commit and push results
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add data/daily-news/
+        git diff --staged --quiet || git commit -m "📰 Daily AI News: $(date +'%Y-%m-%d')"
+        git push
